@@ -47,9 +47,6 @@ of the turn-1 data intact.
 | `langgraph-a2ui-return-direct-handoff.md` | Full engineering handoff — routing mechanism, the pitfall, complete working code, caveats |
 | `a2ui-return-direct-summary.html` | Readable customer-facing summary of the same material |
 
-The HTML summary is also published as a private artifact:
-<https://claude.ai/code/artifact/98b9a8bf-3f52-438e-b647-1d7ce08bf057>
-
 ## Verified against
 
 `langchain==1.3.14` · `langchain-core==1.5.3` · `langgraph==1.2.10` ·
