@@ -1,0 +1,747 @@
+<title>Skipping the ReAct Review Call for A2UI Tools</title>
+
+<style>
+  :root {
+    --ground: #f6f8f8;
+    --surface: #ffffff;
+    --surface-sunk: #eef2f2;
+    --ink: #131a1c;
+    --ink-muted: #5c6b6e;
+    --ink-faint: #8a999c;
+    --rule: #d8e0e0;
+    --rule-strong: #b9c6c7;
+    --accent: #0e5c63;
+    --accent-soft: #dfeced;
+    --critical: #9e3b2f;
+    --critical-soft: #f7e6e2;
+    --positive: #2f6d4a;
+    --positive-soft: #e2eee7;
+
+    --serif: ui-serif, Charter, "Bitstream Charter", "Iowan Old Style", "Source Serif Pro", Georgia, serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0d1315;
+      --surface: #141d1f;
+      --surface-sunk: #101819;
+      --ink: #e4ecec;
+      --ink-muted: #9aabad;
+      --ink-faint: #6c7d80;
+      --rule: #233033;
+      --rule-strong: #35474a;
+      --accent: #57b7c0;
+      --accent-soft: #16302f;
+      --critical: #e0897a;
+      --critical-soft: #2e1b18;
+      --positive: #7cc39c;
+      --positive-soft: #16291f;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0d1315;
+    --surface: #141d1f;
+    --surface-sunk: #101819;
+    --ink: #e4ecec;
+    --ink-muted: #9aabad;
+    --ink-faint: #6c7d80;
+    --rule: #233033;
+    --rule-strong: #35474a;
+    --accent: #57b7c0;
+    --accent-soft: #16302f;
+    --critical: #e0897a;
+    --critical-soft: #2e1b18;
+    --positive: #7cc39c;
+    --positive-soft: #16291f;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 18px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 45rem;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.6rem;
+  }
+
+  /* ---- masthead ---- */
+
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    border-bottom: 2px solid var(--rule-strong);
+    padding-bottom: 2rem;
+  }
+
+  .masthead h1 {
+    font-size: clamp(2rem, 5.5vw, 2.85rem);
+    line-height: 1.12;
+    font-weight: 600;
+    letter-spacing: -0.018em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .standfirst {
+    font-size: 1.15rem;
+    color: var(--ink-muted);
+    max-width: 34rem;
+    margin: 0;
+  }
+
+  .provenance {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.4rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+    margin-top: 0.4rem;
+  }
+
+  .provenance span { white-space: nowrap; }
+  .provenance b { color: var(--ink-muted); font-weight: 400; }
+
+  /* ---- sections ---- */
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  section h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.22;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  section h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0.5rem 0 0;
+  }
+
+  p { margin: 0; max-width: 38rem; }
+
+  a {
+    color: var(--accent);
+    text-underline-offset: 0.18em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.08em 0.32em;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    line-height: 1.65;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 4;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  .cmt { color: var(--ink-faint); }
+  .bad { color: var(--critical); }
+
+  ul {
+    margin: 0;
+    padding-left: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    max-width: 38rem;
+  }
+
+  li::marker { color: var(--ink-faint); }
+
+  /* ---- verdict card ---- */
+
+  .verdict {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    padding: 1.4rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .verdict p { max-width: none; }
+
+  .verdict-line {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0.35rem 1rem;
+    align-items: baseline;
+  }
+
+  .verdict-key {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  @media (max-width: 30rem) {
+    .verdict-line { grid-template-columns: 1fr; }
+  }
+
+  /* ---- message tape ---- */
+
+  .tape-set {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .tape {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .tape-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 1.1rem;
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+  }
+
+  .tag {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.65rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 3px;
+  }
+
+  .tag-bad { background: var(--critical-soft); color: var(--critical); }
+  .tag-good { background: var(--positive-soft); color: var(--positive); }
+
+  .tape-head .what { color: var(--ink-muted); }
+
+  .tape-body { padding: 1.35rem 1.1rem 1.1rem; overflow-x: auto; }
+
+  .chips {
+    display: flex;
+    align-items: stretch;
+    gap: 0.4rem;
+    min-width: max-content;
+  }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
+    color: var(--ink-muted);
+    background: var(--surface-sunk);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+  }
+
+  .chip em {
+    font-style: normal;
+    color: var(--ink-faint);
+    font-size: 0.92em;
+  }
+
+  .chip-scan {
+    border-color: currentColor;
+    border-width: 2px;
+    background: var(--surface);
+    font-weight: 600;
+  }
+
+  .chip-scan.is-bad { color: var(--critical); }
+  .chip-scan.is-good { color: var(--positive); }
+
+  .chip-added {
+    border-style: dashed;
+    color: var(--positive);
+    background: var(--positive-soft);
+  }
+
+  .sep {
+    display: flex;
+    align-items: center;
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+  }
+
+  .tape-note {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.55;
+    margin-top: 0.85rem;
+    padding-top: 0.8rem;
+    border-top: 1px dashed var(--rule);
+    color: var(--ink-muted);
+    max-width: none;
+  }
+
+  .tape-note b { font-weight: 600; }
+  .tape-note.is-bad b { color: var(--critical); }
+  .tape-note.is-good b { color: var(--positive); }
+
+  /* ---- results table ---- */
+
+  .table-wrap { overflow-x: auto; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 26rem;
+    font-size: 0.92rem;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 0.62rem 0.9rem 0.62rem 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: baseline;
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 400;
+    border-bottom-color: var(--rule-strong);
+  }
+
+  td.num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.82rem;
+  }
+
+  td.num.good { color: var(--positive); }
+  td.num.bad { color: var(--critical); }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ---- console readout ---- */
+
+  .readout {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    line-height: 1.7;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    color: var(--ink-muted);
+    margin: 0;
+  }
+
+  .readout b { color: var(--ink); font-weight: 600; }
+  .readout .bad { color: var(--critical); }
+
+  /* ---- callout ---- */
+
+  .callout {
+    border-left: 3px solid var(--critical);
+    background: var(--critical-soft);
+    padding: 1rem 1.2rem;
+    border-radius: 0 4px 4px 0;
+    font-size: 0.97rem;
+  }
+
+  .callout p { max-width: none; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.5rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.75;
+    color: var(--ink-faint);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  footer a { color: var(--ink-muted); }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">LangGraph · agent latency</p>
+    <h1>Skipping the ReAct review call for A2UI tools</h1>
+    <p class="standfirst">
+      You can drop the redundant LLM call after an A2UI tool and still keep the data
+      referenceable in later turns. But the obvious way to do it doesn't work — and fails quietly.
+    </p>
+    <div class="provenance">
+      <span><b>Verified</b> 10 Aug 2026</span>
+      <span><b>langchain</b> 1.3.14</span>
+      <span><b>langgraph</b> 1.2.10</span>
+      <span><b>model</b> claude-sonnet-4-6</span>
+    </div>
+  </header>
+
+  <section>
+    <div>
+      <p class="eyebrow">The short version</p>
+      <h2>What to change</h2>
+    </div>
+    <div class="verdict">
+      <div class="verdict-line">
+        <span class="verdict-key">Keep</span>
+        <p><code>return_direct=True</code> on the A2UI tool. The tool may return a
+        <code>Command</code> — but its <code>messages</code> update must contain
+        <strong>only</strong> the <code>ToolMessage</code>.</p>
+      </div>
+      <div class="verdict-line">
+        <span class="verdict-key">Move</span>
+        <p>The hand-built <code>AIMessage</code> out of the tool and into an
+        <code>after_agent</code> middleware hook.</p>
+      </div>
+      <div class="verdict-line">
+        <span class="verdict-key">Result</span>
+        <p>One model call per surface-rendering turn instead of two, and the thread still
+        contains a proper <code>AIMessage</code> that later turns can reason over.</p>
+      </div>
+    </div>
+    <p>
+      The rest of this page explains why the placement matters. If you only take one thing:
+      putting the <code>AIMessage</code> inside the tool cancels <code>return_direct</code>
+      outright.
+    </p>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">Mechanism</p>
+      <h2>How the short-circuit actually decides</h2>
+    </div>
+    <p>
+      When the tools node finishes, a conditional edge decides whether to end the turn or go
+      back to the model. It makes that call by scanning <em>backwards</em> through the message
+      list for the most recent <code>AIMessage</code>, then checking whether every tool that
+      message called is marked <code>return_direct</code>.
+    </p>
+    <pre><code><span class="cmt"># langchain/agents/factory.py — _make_tools_to_model_edge</span>
+last_ai_message, tool_messages = _fetch_last_ai_and_tool_messages(state["messages"])
+
+client_side_tool_calls = [
+    c for c in last_ai_message.tool_calls if c["name"] in tool_node.tools_by_name
+]
+if client_side_tool_calls and all(
+    tool_node.tools_by_name[c["name"]].return_direct for c in client_side_tool_calls
+):
+    return end_destination      <span class="cmt"># short-circuit: turn ends here</span>
+...
+return model_destination        <span class="cmt"># the slow, redundant call</span></code></pre>
+    <p>
+      Two things follow. The decision reads the message list <em>as the tool left it</em> — so
+      anything the tool wrote is already visible. And it looks at nothing else: not the
+      <code>Command</code>, not the <code>ToolMessage</code> content.
+    </p>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">Placement</p>
+      <h2>Why the same code works or fails on one line's position</h2>
+    </div>
+    <p>
+      Both routes below produce identical thread history. The only difference is
+      <em>when</em> the <code>AIMessage</code> is added — and that changes which message the
+      backwards scan lands on.
+    </p>
+
+    <div class="tape-set">
+
+      <div class="tape">
+        <div class="tape-head">
+          <span class="tag tag-bad">Breaks</span>
+          <span class="what">AIMessage added inside the tool's Command</span>
+        </div>
+        <div class="tape-body">
+          <div class="chips">
+            <div class="chip">Human</div>
+            <div class="sep">→</div>
+            <div class="chip">AI <em>tool_calls</em></div>
+            <div class="sep">→</div>
+            <div class="chip">Tool <em>surface</em></div>
+            <div class="sep">→</div>
+            <div class="chip chip-scan is-bad">AI <em>synthetic</em> ← scan lands here</div>
+          </div>
+          <p class="tape-note is-bad">
+            Synthetic message has <b>no tool_calls</b> → the return_direct branch is skipped →
+            edge falls through to the model. <b>2 model calls.</b> On Anthropic the second one
+            is a hard 400, because history now ends on an assistant turn.
+          </p>
+        </div>
+      </div>
+
+      <div class="tape">
+        <div class="tape-head">
+          <span class="tag tag-good">Works</span>
+          <span class="what">AIMessage added by after_agent middleware</span>
+        </div>
+        <div class="tape-body">
+          <div class="chips">
+            <div class="chip">Human</div>
+            <div class="sep">→</div>
+            <div class="chip chip-scan is-good">AI <em>tool_calls</em> ← scan lands here</div>
+            <div class="sep">→</div>
+            <div class="chip">Tool <em>surface</em></div>
+            <div class="sep">⇥</div>
+            <div class="chip chip-added">AI <em>synthetic</em> · appended after exit</div>
+          </div>
+          <p class="tape-note is-good">
+            Scan finds the real tool-calling message, all its tools are return_direct →
+            <b>turn ends. 1 model call.</b> The middleware then appends the synthetic message
+            outside the loop, so routing never sees it.
+          </p>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="callout">
+      <p>
+        Reordering the two messages inside the tool does not help. Putting the
+        <code>AIMessage</code> first fails the same check <em>and</em> produces an invalid
+        tool-call / tool-result sequence.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">Implementation</p>
+      <h2>The working pattern</h2>
+    </div>
+
+    <h3>The tool — ToolMessage only</h3>
+    <pre><code>@tool(return_direct=True)
+def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
+    """Fetch an account summary and render it as an A2UI surface."""
+    data = load_account_summary(account_id)
+    surface = build_a2ui_surface(data)
+
+    <span class="cmt"># Push to the UI immediately — your existing queue flush goes here.</span>
+    get_stream_writer()({"type": "a2ui_surface", "surface": surface})
+
+    return Command(
+        update={
+            "a2ui_surfaces": [surface],
+            "messages": [
+                ToolMessage(
+                    content=render_summary(surface),
+                    tool_call_id=runtime.tool_call_id,
+                )
+            ],                          <span class="cmt"># ← no AIMessage here</span>
+        }
+    )</code></pre>
+
+    <h3>The middleware — deterministic, no model call</h3>
+    <pre><code>@after_agent(state_schema=A2UIState)
+def append_a2ui_summary(state: A2UIState, runtime: Runtime) -> dict[str, Any] | None:
+    """Restate a return-direct A2UI result as an AIMessage."""
+    last = state["messages"][-1]
+    if not isinstance(last, ToolMessage) or last.name not in A2UI_DIRECT_TOOLS:
+        return None                     <span class="cmt"># ← guard: runs on every turn</span>
+    return {"messages": [AIMessage(content=render_summary(state["a2ui_surfaces"][-1]))]}</code></pre>
+    <p>
+      <code>render_summary</code> is template-driven text built from data the tool already
+      holds. No model is involved, so the message costs nothing.
+    </p>
+
+    <h3>State and wiring</h3>
+    <pre><code>class A2UIState(AgentState):
+    a2ui_surfaces: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
+
+agent = create_agent(
+    model="anthropic:claude-sonnet-4-6",
+    tools=[fetch_account_summary],
+    middleware=[append_a2ui_summary],
+    state_schema=A2UIState,
+    checkpointer=InMemorySaver(),
+)</code></pre>
+    <p>
+      The reducer on <code>a2ui_surfaces</code> matters because the model can call tools in
+      parallel, and concurrent writes to one field need a merge rule.
+    </p>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">Evidence</p>
+      <h2>Measured, not assumed</h2>
+    </div>
+    <p>
+      Both routes were run against the live API with a callback counting
+      <code>on_chat_model_start</code>. Latency alone won't show you this — you have to count
+      the calls.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Route</th>
+            <th scope="col">Model calls</th>
+            <th scope="col">Turn outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>AIMessage inside the tool</td>
+            <td class="num bad">2</td>
+            <td>HTTP 400 — assistant prefill</td>
+          </tr>
+          <tr>
+            <td>AIMessage via after_agent</td>
+            <td class="num good">1</td>
+            <td>Ends on the synthetic message</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="eyebrow" style="margin-top:0.5rem">Working route · turn 1</p>
+    <pre class="readout">model calls in turn 1:    <b>1</b>          <span class="cmt">tool-calling call only</span>
+surfaces pushed mid-tool: <b>1</b>
+thread history:           <b>[HumanMessage, AIMessage, ToolMessage, AIMessage]</b></pre>
+    <p class="eyebrow" style="margin-top:0.5rem">Working route · turn 2, same thread</p>
+    <pre class="readout">&gt; What was the pending charges figure?
+
+<b>"Based on the account summary retrieved, the pending charges for account
+ 998877 (Everyday Checking) were $132.40."</b></pre>
+    <p>
+      The later turn recalls the data cleanly, which is the behaviour the synthetic message
+      exists to protect.
+    </p>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">Before you ship</p>
+      <h2>Four things that will bite</h2>
+    </div>
+    <ul>
+      <li>
+        <strong>It's all-or-nothing per turn.</strong> <code>return_direct</code> short-circuits
+        only if <em>every</em> tool called in that turn has it set. One ordinary tool in a
+        parallel batch sends the whole turn back through the model.
+      </li>
+      <li>
+        <strong><code>after_agent</code> fires on every turn</strong>, including normal
+        conversational ones that already ended with a real model response. Without the guard
+        you'll staple synthetic text onto those too.
+      </li>
+      <li>
+        <strong>Message order is load-bearing.</strong> The synthetic message must carry no
+        <code>tool_calls</code> and must follow the <code>ToolMessage</code>. That sequence is
+        valid input for both Anthropic and OpenAI on the next turn.
+      </li>
+      <li>
+        <strong><code>get_stream_writer()</code> needs a graph context.</strong> A tool that
+        calls it can't be invoked standalone in a unit test — inject the writer or guard the
+        call if you want direct-invocation tests.
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">Open question</p>
+      <h2>One answer could make this simpler</h2>
+    </div>
+    <p>
+      We still need to confirm how "search in later turns" is implemented on your side, because
+      it changes the recommendation:
+    </p>
+    <ul>
+      <li>
+        <strong>Full thread history replayed to the model</strong> — the synthetic
+        <code>AIMessage</code> is the right fix, exactly as above.
+      </li>
+      <li>
+        <strong>A separate retrieval or embedding index</strong> — point it at
+        <code>ToolMessage</code> content directly. Then you need no fabricated message and no
+        middleware at all: the tool plus <code>return_direct=True</code> is the whole solution.
+      </li>
+    </ul>
+    <p>
+      Worth checking early. The second answer removes code rather than adding it.
+    </p>
+  </section>
+
+  <footer>
+    <span>Verified against langchain 1.3.14 · langchain-core 1.5.3 · langgraph 1.2.10 · langchain-anthropic 1.5.4</span>
+    <span>Routing source of truth: <a href="https://github.com/langchain-ai/langchain/blob/master/libs/langchain_v1/langchain/agents/factory.py">langchain/agents/factory.py</a> — <code>_make_tools_to_model_edge</code></span>
+    <span>Docs: <a href="https://docs.langchain.com/oss/python/langchain/tools#return-directly-from-a-tool">return_direct</a> · <a href="https://docs.langchain.com/oss/python/langchain/tools#update-state">Command / update state</a> · <a href="https://docs.langchain.com/oss/python/langchain/middleware">middleware</a></span>
+  </footer>
+
+</div>
