@@ -46,6 +46,7 @@ of the turn-1 data intact.
 | --- | --- |
 | `langgraph-a2ui-return-direct-handoff.md` | Full engineering handoff — routing mechanism, the pitfall, complete working code, caveats |
 | `a2ui-return-direct-summary.html` | Readable customer-facing summary of the same material |
+| `verify_a2ui.py` | Runs both routes against the live API and asserts the model-call counts |
 
 ## Verified against
 
@@ -56,12 +57,29 @@ Findings were confirmed by running both routes against the live API with a
 `BaseCallbackHandler` counting `on_chat_model_start`. Latency alone will not
 surface this — the call count has to be instrumented.
 
-## Setup
+## Reproducing
 
 ```bash
 uv sync
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY and LANGSMITH_API_KEY
+cp .env.example .env    # then fill in ANTHROPIC_API_KEY
+uv run python verify_a2ui.py
 ```
+
+Expected output:
+
+```
+WORKING ROUTE — after_agent middleware
+  model calls in turn 1:    1
+  thread history:           ['HumanMessage', 'AIMessage', 'ToolMessage', 'AIMessage']
+  turn 2 recall:            'The pending charges figure ... was $132.40.'
+
+BROKEN ROUTE — AIMessage inside the tool's Command
+  model calls in turn 1:    2
+  outcome:                  BadRequestError: 400 ... assistant message prefill
+```
+
+The script asserts both counts, so it fails loudly if a future version changes
+the routing behaviour.
 
 This repo holds the investigation and its write-ups, not a deployable agent. The
 code in the handoff doc is reference material to lift into the customer's own
