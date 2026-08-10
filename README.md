@@ -48,6 +48,10 @@ of the turn-1 data intact.
 | `a2ui-return-direct-summary.html` | Readable customer-facing summary of the same material |
 | `verify_a2ui.py` | Runs both routes against the live API and asserts the model-call counts |
 
+This repo holds the investigation and its write-ups, not a deployable agent. The
+code in the handoff doc is reference material to lift into the customer's own
+graph; `verify_a2ui.py` exists to prove the finding, not to be deployed.
+
 ## Verified against
 
 `langchain==1.3.14` · `langchain-core==1.5.3` · `langgraph==1.2.10` ·
@@ -70,20 +74,24 @@ Expected output:
 ```
 WORKING ROUTE — after_agent middleware
   model calls in turn 1:    1
+  surfaces pushed mid-tool: 1
   thread history:           ['HumanMessage', 'AIMessage', 'ToolMessage', 'AIMessage']
-  turn 2 recall:            'The pending charges figure ... was $132.40.'
+  final message:            'Displayed the account summary for 998877 ...'
+  turn 2 recall:            '... the pending charges for account 998877 ... were $132.40.'
 
 BROKEN ROUTE — AIMessage inside the tool's Command
   model calls in turn 1:    2
   outcome:                  BadRequestError: 400 ... assistant message prefill
+
+All assertions passed.
 ```
 
+Wording of the two model-generated lines varies between runs; the counts do not.
 The script asserts both counts, so it fails loudly if a future version changes
 the routing behaviour.
 
-This repo holds the investigation and its write-ups, not a deployable agent. The
-code in the handoff doc is reference material to lift into the customer's own
-graph.
+The LangSmith keys in `.env.example` are optional — tracing is on by default but
+degrades quietly without a key.
 
 ## Open question
 
