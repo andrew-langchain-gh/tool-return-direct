@@ -2,6 +2,9 @@
 
 > Verified end-to-end against `langchain==1.3.14`, `langchain-core==1.5.3`, `langgraph==1.2.10`,
 > `langchain-anthropic==1.5.4` (model `anthropic:claude-sonnet-4-6`) on 2026-08-10.
+>
+> Every result below is reproducible: `uv run python verify_a2ui.py` in this repo runs both
+> routes against the live API and asserts the model-call counts.
 
 ## Context / Scenario
 
@@ -88,10 +91,11 @@ Walk it through the routing logic above. After the tools node, `state["messages"
 **Net effect: the LLM call you were trying to eliminate still happens.** Worse, it is now invoked on a history ending in an assistant message. Observed behavior in the verification run:
 
 ```
-[4] broken variant outcome: BadRequestError: Error code: 400 -
-    'This model does not support assistant message prefill.
-     The conversation must end with a user message.'
-[4] model calls with AIMessage inside the tool Command: 2
+BROKEN ROUTE — AIMessage inside the tool's Command
+  model calls in turn 1:    2
+  outcome:                  BadRequestError: Error code: 400 - 'This model does not
+                            support assistant message prefill. The conversation must
+                            end with a user message.'
 ```
 
 With Anthropic this is a hard 400. With providers that tolerate assistant-final input, it degrades quietly into an extra latency hit plus a continuation of your own synthetic text — the failure mode is invisible until you count model calls.
@@ -122,6 +126,9 @@ class A2UIState(AgentState):
 ```
 
 ### The tool
+
+`load_account_summary` and `build_a2ui_surface` stand in for your existing fetch and
+surface-building logic; only `render_summary` below is new.
 
 ```python
 from langchain.messages import ToolMessage
@@ -205,22 +212,24 @@ agent = create_agent(
 Turn 1 — `"Show me the summary for account 998877."`
 
 ```
-model calls in turn 1:       1          # the tool-calling call only; no review call
-surfaces pushed mid-tool:    1
-final message type:          AIMessage
-final message content:       'Displayed the account summary for 998877 (Everyday Checking):
-                              available balance $4,820.17, pending charges $132.40.'
-thread history:              [HumanMessage, AIMessage, ToolMessage, AIMessage]
+WORKING ROUTE — after_agent middleware
+  model calls in turn 1:    1          # the tool-calling call only; no review call
+  surfaces pushed mid-tool: 1
+  thread history:           ['HumanMessage', 'AIMessage', 'ToolMessage', 'AIMessage']
+  final message:            'Displayed the account summary for 998877 (Everyday Checking):
+                             available balance $4,820.17, pending charges $132.40.'
 ```
 
 Turn 2 on the same `thread_id` — `"What was the pending charges figure?"`
 
 ```
 'Based on the account summary retrieved, the pending charges for account 998877
- (Everyday Checking) were **$132.40**.'
+ (Everyday Checking) were $132.40.'
 ```
 
-One model call for the turn that renders the surface, and the data is still fully referenceable afterwards.
+One model call for the turn that renders the surface, and the data is still fully
+referenceable afterwards. The model-generated wording varies between runs; the call counts
+do not, which is why `verify_a2ui.py` asserts on the counts rather than the text.
 
 ## 3. Caveats
 
@@ -231,6 +240,9 @@ One model call for the turn that renders the surface, and the data is still full
 - **Count model calls, don't eyeball latency.** The pitfall above is only reliably visible by instrumenting `on_chat_model_start`. A `BaseCallbackHandler` counter passed via `config={"callbacks": [...]}` is enough:
 
   ```python
+  from langchain_core.callbacks import BaseCallbackHandler
+
+
   class ModelCallCounter(BaseCallbackHandler):
       def __init__(self) -> None:
           self.count = 0
@@ -254,6 +266,7 @@ Worth asking either way, since the second answer makes this simpler rather than 
 2. Return directly from a tool (JS): https://docs.langchain.com/oss/javascript/langchain/tools#return-directly-from-a-tool
 3. Update state / `Command` from a tool (Python): https://docs.langchain.com/oss/python/langchain/tools#update-state
 4. AI message (Python): https://docs.langchain.com/oss/python/langchain/messages#ai-message
-5. Middleware hooks, incl. `after_agent` (Python): https://docs.langchain.com/oss/python/langchain/middleware
+5. Custom middleware, incl. `@after_agent` (Python): https://docs.langchain.com/oss/python/langchain/middleware/custom
 6. Streaming custom updates from tools: https://docs.langchain.com/oss/python/langchain/streaming#custom-updates
 7. Routing source of truth — `_make_tools_to_model_edge`: https://github.com/langchain-ai/langchain/blob/master/libs/langchain_v1/langchain/agents/factory.py
+8. Reproducer in this repo: `verify_a2ui.py` — `uv run python verify_a2ui.py`
