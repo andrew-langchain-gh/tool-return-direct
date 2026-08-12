@@ -1,10 +1,11 @@
 # Handoff: Skipping the ReAct Reasoning Step for A2UI Tool Calls
 
 > Verified end-to-end against `langchain==1.3.14`, `langchain-core==1.5.3`, `langgraph==1.2.10`,
-> `langchain-anthropic==1.5.4` (model `anthropic:claude-sonnet-4-6`) on 2026-08-10.
+> `langchain-anthropic==1.5.4` (model `anthropic:claude-sonnet-4-6`) on 2026-08-12.
 >
-> Every result below is reproducible: `uv run python verify_a2ui.py` in this repo runs both
-> routes against the live API and asserts the model-call counts.
+> Every result below is reproducible: `uv run python verify_a2ui.py` in this repo runs the
+> working, broken, and tool-failure routes against the live API and asserts the model-call
+> counts.
 
 ## Context / Scenario
 
@@ -31,6 +32,7 @@ Can we **skip that last reasoning/LLM call for specific tools** — to avoid the
 | Push the A2UI surface to the UI mid-tool | `get_stream_writer()` from inside the tool (equivalent to the existing queue push) |
 | Keep the surface in graph state | Tool returns `Command(update={...})` — **`ToolMessage` only** in `messages` |
 | Get an `AIMessage` into thread history, with no model call | An **`after_agent` middleware hook** appends a deterministic `AIMessage` |
+| Keep a failed fetch from restating stale data | The hook matches surfaces on `tool_call_id` and skips `status == "error"` |
 
 The one non-obvious part is the last row. The natural-looking approach — building the `AIMessage` inside the tool and returning it in the same `Command` — **silently defeats `return_direct`**. See [The Pitfall](#the-pitfall-do-not-append-the-aimessage-inside-the-tool) below.
 
@@ -144,6 +146,7 @@ def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
     """Fetch an account summary and render it as an A2UI surface."""
     data = load_account_summary(account_id)
     surface = build_a2ui_surface(data)
+    surface["toolCallId"] = runtime.tool_call_id
 
     # Push to the UI immediately — the existing queue flush goes here.
     get_stream_writer()({"type": "a2ui_surface", "surface": surface})
@@ -161,6 +164,11 @@ def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
     )
 ```
 
+Stamping `toolCallId` on the surface is what lets the middleware below restate *this*
+turn's surfaces rather than whatever happens to sit last in the accumulated list. Skip it
+and a failed fetch will confidently restate stale account data — see
+[The error path](#the-error-path-a-failed-fetch-must-not-restate-a-stale-surface).
+
 `render_summary` is deterministic, template-driven text built from the data the tool already has — no model involved:
 
 ```python
@@ -176,21 +184,100 @@ def render_summary(surface: dict[str, Any]) -> str:
 ### The middleware
 
 ```python
+from collections.abc import Sequence
+
 from langchain.agents.middleware import after_agent
-from langchain.messages import AIMessage
+from langchain.messages import AIMessage, AnyMessage
 from langgraph.runtime import Runtime
+
+
+def tool_messages_from_last_turn(messages: Sequence[AnyMessage]) -> list[ToolMessage]:
+    """The ToolMessages appended after the most recent AIMessage."""
+    collected: list[ToolMessage] = []
+    for message in reversed(messages):
+        if not isinstance(message, ToolMessage):
+            break
+        collected.append(message)
+    return collected
 
 
 @after_agent(state_schema=A2UIState)
 def append_a2ui_summary(state: A2UIState, runtime: Runtime) -> dict[str, Any] | None:
-    """Restate a return-direct A2UI tool result as an AIMessage, with no model call."""
-    last = state["messages"][-1]
-    if not isinstance(last, ToolMessage) or last.name not in A2UI_DIRECT_TOOLS:
+    """Restate return-direct A2UI results as an AIMessage, with no model call."""
+    rendered_tool_call_ids = {
+        message.tool_call_id
+        for message in tool_messages_from_last_turn(state["messages"])
+        if message.name in A2UI_DIRECT_TOOLS and message.status != "error"
+    }
+    if not rendered_tool_call_ids:
         return None
-    return {"messages": [AIMessage(content=render_summary(state["a2ui_surfaces"][-1]))]}
+
+    surfaces = [
+        surface
+        for surface in state.get("a2ui_surfaces", [])
+        if surface["toolCallId"] in rendered_tool_call_ids
+    ]
+    if not surfaces:
+        return None
+
+    return {"messages": [AIMessage(content=" ".join(render_summary(s) for s in surfaces))]}
 ```
 
-The guard matters: `after_agent` runs at the end of **every** turn, including ordinary turns that already ended with a real model-generated `AIMessage`. Returning `None` there leaves those untouched.
+Each part of that guard is load-bearing:
+
+- **`after_agent` runs at the end of every turn**, including ordinary turns that already ended with a real model-generated `AIMessage`. On those, the last message is not a `ToolMessage`, the id set is empty, and returning `None` leaves them untouched.
+- **`message.name in A2UI_DIRECT_TOOLS`** works because `ToolNode` backfills `name` onto the `ToolMessage` in your `Command` update — it matches on `tool_call_id` and sets `message.name = call["name"]`. You do not set `name` yourself in the tool, so if you ever build the `ToolMessage` outside that path, check that `name` is actually populated or this guard silently no-ops.
+- **`message.status != "error"`** and **matching on `toolCallId`** keep a failed fetch from restating a stale surface. That failure mode is worth its own section.
+
+### The error path: a failed fetch must not restate a stale surface
+
+`create_agent` does not swallow tool exceptions by default — an unhandled error propagates
+out of `invoke`, so the middleware never runs. Most production agents don't leave it there:
+the documented way to keep one bad fetch from failing the whole turn is a `wrap_tool_call`
+middleware that converts the exception into an error `ToolMessage`.
+
+```python
+from collections.abc import Callable
+
+from langchain.agents.middleware import wrap_tool_call
+from langchain.tools.tool_node import ToolCallRequest
+
+
+@wrap_tool_call
+def convert_tool_errors_to_messages(
+    request: ToolCallRequest,
+    handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+) -> ToolMessage | Command[Any]:
+    try:
+        return handler(request)
+    except Exception as exc:
+        return ToolMessage(
+            content=f"The account service is unavailable ({exc}).",
+            tool_call_id=request.tool_call["id"],
+            name=request.tool_call["name"],
+            status="error",
+        )
+```
+
+Once that exists, the error `ToolMessage` carries the A2UI tool's `name` — exactly what
+`ToolNode`'s own built-in error handler does — so a naive guard that only checks
+`isinstance(last, ToolMessage)` and the tool name **passes on the failed turn**. With
+`state["a2ui_surfaces"][-1]` it then restates the last surface that succeeded:
+
+```
+turn 1  "Show me the summary for account 998877."   -> surface rendered, $4,820.17
+turn 2  "Now show me account 112233."               -> fetch fails
+        final message: "Displayed the account summary for 998877 ... $4,820.17."
+```
+
+The user asked for a different account, the fetch failed, and the agent reported another
+account's balance as the answer. On the very first turn of a thread the same guard raises
+`IndexError` instead, because `a2ui_surfaces` is still empty. The status check plus the
+`toolCallId` match close both cases; `verify_a2ui.py` asserts the stale figure never
+reaches the user.
+
+Note the handler signature above: `handler` returns `ToolMessage | Command[Any]`, not just
+`ToolMessage`. The narrower annotation in the LangChain docs example does not type-check.
 
 ### Wiring
 
@@ -223,19 +310,23 @@ WORKING ROUTE — after_agent middleware
 Turn 2 on the same `thread_id` — `"What was the pending charges figure?"`
 
 ```
-'Based on the account summary retrieved, the pending charges for account 998877
- (Everyday Checking) were $132.40.'
+'The pending charges for account 998877 (Everyday Checking) were $132.40.'
 ```
 
 One model call for the turn that renders the surface, and the data is still fully
-referenceable afterwards. The model-generated wording varies between runs; the call counts
-do not, which is why `verify_a2ui.py` asserts on the counts rather than the text.
+referenceable afterwards. Turn 1's final message is deterministic template text, so it is
+byte-identical every run; only the turn-2 recall wording varies, which is why
+`verify_a2ui.py` asserts on the model-call counts and on the presence of the figure rather
+than on the exact sentence.
 
 ## 3. Caveats
 
 - **All-or-nothing per turn.** `return_direct` short-circuits only if *every* tool called in that turn has `return_direct=True`. Mixing an A2UI tool with an ordinary tool in one model turn reverts to the normal loop.
 - **The synthetic `AIMessage` must have no `tool_calls`**, and must come after the `ToolMessage`. That ordering (`AIMessage(tool_calls)` → `ToolMessage` → `AIMessage`) is valid input for both Anthropic and OpenAI on the next turn.
-- **`after_agent` fires on every turn.** Guard on the last message, as above, or you will append synthetic text to normal conversational turns.
+- **`after_agent` fires on every turn.** Guard on the trailing `ToolMessage`s, as above, or you will append synthetic text to normal conversational turns.
+- **Never restate `a2ui_surfaces[-1]` blindly.** Match surfaces to the current turn's `tool_call_id`s and skip `status == "error"` messages, or a failed fetch will report a previous account's data. See [the error path](#the-error-path-a-failed-fetch-must-not-restate-a-stale-surface).
+- **Parallel A2UI calls produce more than one surface per turn.** Two return-direct A2UI tools in one model turn still short-circuit, and both surfaces land in `a2ui_surfaces`. The guard above restates every surface belonging to that turn; taking only the last one would silently drop the other.
+- **`@wrap_tool_call` takes no `state_schema`,** so its middleware is typed against the base `AgentState` while `@after_agent(state_schema=A2UIState)` is not. `AgentMiddleware`'s `StateT` is invariant, so a list holding both fails strict type checking even though it runs correctly. Annotate the list as `list[AgentMiddleware[Any, Any, Any]]`.
 - **`get_stream_writer()` requires a LangGraph execution context.** A tool that calls it cannot be invoked standalone in a unit test — inject the writer or guard the call if you need direct-invocation tests.
 - **Count model calls, don't eyeball latency.** The pitfall above is only reliably visible by instrumenting `on_chat_model_start`. A `BaseCallbackHandler` counter passed via `config={"callbacks": [...]}` is enough:
 
@@ -268,5 +359,6 @@ Worth asking either way, since the second answer makes this simpler rather than 
 4. AI message (Python): https://docs.langchain.com/oss/python/langchain/messages#ai-message
 5. Custom middleware, incl. `@after_agent` (Python): https://docs.langchain.com/oss/python/langchain/middleware/custom
 6. Streaming custom updates from tools: https://docs.langchain.com/oss/python/langchain/streaming#custom-updates
-7. Routing source of truth — `_make_tools_to_model_edge`: https://github.com/langchain-ai/langchain/blob/master/libs/langchain_v1/langchain/agents/factory.py
-8. Reproducer in this repo: `verify_a2ui.py` — `uv run python verify_a2ui.py`
+7. Tool error handling with `wrap_tool_call`: https://docs.langchain.com/oss/python/langchain/tools#error-handling
+8. Routing source of truth — `_make_tools_to_model_edge`: https://github.com/langchain-ai/langchain/blob/master/libs/langchain_v1/langchain/agents/factory.py
+9. Reproducer in this repo: `verify_a2ui.py` — `uv run python verify_a2ui.py`

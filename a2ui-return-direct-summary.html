@@ -438,10 +438,11 @@
     <h1>Skipping the ReAct review call for A2UI tools</h1>
     <p class="standfirst">
       You can drop the redundant LLM call after an A2UI tool and still keep the data
-      referenceable in later turns. But the obvious way to do it doesn't work — and fails quietly.
+      referenceable in later turns. But two obvious-looking moves fail quietly: one cancels
+      the optimisation outright, the other answers with the wrong account.
     </p>
     <div class="provenance">
-      <span><b>Verified</b> 10 Aug 2026</span>
+      <span><b>Verified</b> 12 Aug 2026</span>
       <span><b>langchain</b> 1.3.14</span>
       <span><b>langgraph</b> 1.2.10</span>
       <span><b>model</b> claude-sonnet-4-6</span>
@@ -514,7 +515,7 @@ return model_destination        <span class="cmt"># the slow, redundant call</sp
       <h2>Why the same code works or fails on one line's position</h2>
     </div>
     <p>
-      Both routes below produce identical thread history. The only difference is
+      Both routes below aim at the same final message sequence. The only difference is
       <em>when</em> the <code>AIMessage</code> is added — and that changes which message the
       backwards scan lands on.
     </p>
@@ -590,6 +591,7 @@ def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
     """Fetch an account summary and render it as an A2UI surface."""
     data = load_account_summary(account_id)
     surface = build_a2ui_surface(data)
+    surface["toolCallId"] = runtime.tool_call_id   <span class="cmt"># ← lets the hook find this turn's surface</span>
 
     <span class="cmt"># Push to the UI immediately — your existing queue flush goes here.</span>
     get_stream_writer()({"type": "a2ui_surface", "surface": surface})
@@ -609,14 +611,32 @@ def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
     <h3>The middleware — deterministic, no model call</h3>
     <pre><code>@after_agent(state_schema=A2UIState)
 def append_a2ui_summary(state: A2UIState, runtime: Runtime) -> dict[str, Any] | None:
-    """Restate a return-direct A2UI result as an AIMessage."""
-    last = state["messages"][-1]
-    if not isinstance(last, ToolMessage) or last.name not in A2UI_DIRECT_TOOLS:
-        return None                     <span class="cmt"># ← guard: runs on every turn</span>
-    return {"messages": [AIMessage(content=render_summary(state["a2ui_surfaces"][-1]))]}</code></pre>
+    """Restate return-direct A2UI results as an AIMessage."""
+    rendered_tool_call_ids = {
+        message.tool_call_id
+        for message in tool_messages_from_last_turn(state["messages"])
+        if message.name in A2UI_DIRECT_TOOLS and message.status != "error"
+    }
+    if not rendered_tool_call_ids:      <span class="cmt"># ← guard: hook runs on every turn</span>
+        return None
+
+    surfaces = [
+        surface
+        for surface in state.get("a2ui_surfaces", [])
+        if surface["toolCallId"] in rendered_tool_call_ids
+    ]
+    if not surfaces:
+        return None
+
+    return {"messages": [AIMessage(content=" ".join(render_summary(s) for s in surfaces))]}</code></pre>
     <p>
       <code>render_summary</code> is template-driven text built from data the tool already
       holds. No model is involved, so the message costs nothing.
+    </p>
+    <p>
+      The <code>status</code> check and the <code>toolCallId</code> match are not decoration.
+      Restating <code>a2ui_surfaces[-1]</code> instead is the second trap on this page — see
+      below.
     </p>
 
     <h3>State and wiring</h3>
@@ -638,14 +658,47 @@ agent = create_agent(
 
   <section>
     <div>
+      <p class="eyebrow">The second trap</p>
+      <h2>A failed fetch that answers with the wrong account</h2>
+    </div>
+    <p>
+      <code>create_agent</code> lets tool exceptions propagate by default, so the hook never
+      runs. Production agents rarely leave it there — the documented fix is a
+      <code>wrap_tool_call</code> middleware that turns the exception into an error
+      <code>ToolMessage</code>, so one bad fetch doesn't fail the whole turn.
+    </p>
+    <p>
+      That error message carries the A2UI tool's <code>name</code>, exactly as LangGraph's own
+      built-in error handler sets it. So a guard that checks only the message type and the tool
+      name <strong>passes on the failed turn</strong> — and <code>a2ui_surfaces[-1]</code> is
+      still holding the last surface that worked:
+    </p>
+    <pre class="readout">turn 1  <b>"Show me the summary for account 998877."</b>
+        → surface renders, available balance $4,820.17
+
+turn 2  <b>"Now show me account 112233."</b>
+        → fetch fails
+        → final message: <span class="bad">"Displayed the account summary for 998877 … $4,820.17."</span></pre>
+    <div class="callout">
+      <p>
+        The customer asked for a different account, the fetch failed, and the agent reported
+        another account's balance as the answer. On the first turn of a thread the same guard
+        raises <code>IndexError</code> instead, because no surface exists yet. Matching on
+        <code>toolCallId</code> and skipping <code>status == "error"</code> closes both.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div>
       <p class="eyebrow">Evidence</p>
       <h2>Measured, not assumed</h2>
     </div>
     <p>
-      Both routes were run against the live API with a callback counting
+      All three routes were run against the live API with a callback counting
       <code>on_chat_model_start</code>. Latency alone won't show you this — you have to count
       the calls. Everything below is reproducible with <code>uv run python verify_a2ui.py</code>
-      in the handoff repo, which asserts both counts.
+      in the handoff repo, which asserts the counts and that no stale surface reaches the user.
     </p>
     <div class="table-wrap">
       <table>
@@ -667,6 +720,11 @@ agent = create_agent(
             <td class="num good">1</td>
             <td>Ends on the synthetic message</td>
           </tr>
+          <tr>
+            <td>after_agent, tool fetch fails</td>
+            <td class="num good">1</td>
+            <td>Ends on the error — no stale surface</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -677,25 +735,36 @@ thread history:           <b>['HumanMessage', 'AIMessage', 'ToolMessage', 'AIMes
     <p class="eyebrow" style="margin-top:0.5rem">Working route · turn 2, same thread</p>
     <pre class="readout">&gt; What was the pending charges figure?
 
-<b>"Based on the account summary retrieved, the pending charges for account
- 998877 (Everyday Checking) were $132.40."</b></pre>
+<b>"The pending charges for account 998877 (Everyday Checking) were $132.40."</b></pre>
     <p>
       The later turn recalls the data cleanly, which is the behaviour the synthetic message
-      exists to protect. The model's wording varies between runs; the call counts don't, which
-      is why the check asserts on counts rather than text.
+      exists to protect. Turn 1's message is deterministic template text; only this turn-2
+      wording varies between runs, which is why the check asserts on call counts and on the
+      figure being present rather than on exact sentences.
     </p>
   </section>
 
   <section>
     <div>
       <p class="eyebrow">Before you ship</p>
-      <h2>Four things that will bite</h2>
+      <h2>Six things that will bite</h2>
     </div>
     <ul>
       <li>
         <strong>It's all-or-nothing per turn.</strong> <code>return_direct</code> short-circuits
         only if <em>every</em> tool called in that turn has it set. One ordinary tool in a
         parallel batch sends the whole turn back through the model.
+      </li>
+      <li>
+        <strong>Parallel A2UI calls make more than one surface.</strong> Two return-direct A2UI
+        tools in one turn still short-circuit, and both surfaces land in state. Restate every
+        surface belonging to that turn, or you'll silently drop one.
+      </li>
+      <li>
+        <strong>The name guard depends on a backfill.</strong> <code>ToolNode</code> sets
+        <code>name</code> on the <code>ToolMessage</code> in your <code>Command</code> by
+        matching <code>tool_call_id</code> — you never set it yourself. Build that message
+        outside this path and the guard silently stops matching.
       </li>
       <li>
         <strong><code>after_agent</code> fires on every turn</strong>, including normal
