@@ -1,22 +1,26 @@
 """Reproduce the A2UI `return_direct` finding.
 
-Runs two agents against the live API and counts model calls per turn:
+Runs three agents against the live API and counts model calls per turn:
 
   working  return_direct tool + after_agent middleware  -> 1 call
   broken   AIMessage returned inside the tool's Command -> 2 calls (400 on Anthropic)
+  failure  A2UI tool errors after an earlier success    -> no stale surface restated
 
 Requires ANTHROPIC_API_KEY in .env. See langgraph-a2ui-return-direct-handoff.md.
 """
 
 import operator
+from collections.abc import Callable, Sequence
 from typing import Annotated, Any, NotRequired
 
 from dotenv import load_dotenv
 from langchain.agents import AgentState, create_agent
-from langchain.agents.middleware import after_agent
-from langchain.messages import AIMessage, ToolMessage
+from langchain.agents.middleware import AgentMiddleware, after_agent, wrap_tool_call
+from langchain.messages import AIMessage, AnyMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
+from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
@@ -64,6 +68,7 @@ def render_summary(surface: dict[str, Any]) -> str:
 def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
     """Fetch an account summary and render it as an A2UI surface."""
     surface = build_a2ui_surface(load_account_summary(account_id))
+    surface["toolCallId"] = runtime.tool_call_id
 
     # Push to the UI immediately — the existing queue flush goes here.
     get_stream_writer()({"type": "a2ui_surface", "surface": surface})
@@ -81,13 +86,36 @@ def fetch_account_summary(account_id: str, runtime: ToolRuntime) -> Command:
     )
 
 
+def tool_messages_from_last_turn(messages: Sequence[AnyMessage]) -> list[ToolMessage]:
+    """The ToolMessages appended after the most recent AIMessage."""
+    collected: list[ToolMessage] = []
+    for message in reversed(messages):
+        if not isinstance(message, ToolMessage):
+            break
+        collected.append(message)
+    return collected
+
+
 @after_agent(state_schema=A2UIState)
 def append_a2ui_summary(state: A2UIState, runtime: Runtime) -> dict[str, Any] | None:
-    """Restate a return-direct A2UI result as an AIMessage, with no model call."""
-    last = state["messages"][-1]
-    if not isinstance(last, ToolMessage) or last.name not in A2UI_DIRECT_TOOLS:
+    """Restate return-direct A2UI results as an AIMessage, with no model call."""
+    rendered_tool_call_ids = {
+        message.tool_call_id
+        for message in tool_messages_from_last_turn(state["messages"])
+        if message.name in A2UI_DIRECT_TOOLS and message.status != "error"
+    }
+    if not rendered_tool_call_ids:
         return None
-    return {"messages": [AIMessage(content=render_summary(state["a2ui_surfaces"][-1]))]}
+
+    surfaces = [
+        surface
+        for surface in state.get("a2ui_surfaces", [])
+        if surface["toolCallId"] in rendered_tool_call_ids
+    ]
+    if not surfaces:
+        return None
+
+    return {"messages": [AIMessage(content=" ".join(render_summary(s) for s in surfaces))]}
 
 
 @tool(return_direct=True)
@@ -106,6 +134,29 @@ def fetch_account_summary_broken(account_id: str, runtime: ToolRuntime) -> Comma
             ]
         }
     )
+
+
+@tool("fetch_account_summary", return_direct=True)
+def fetch_account_summary_unavailable(account_id: str) -> Command:
+    """Fetch an account summary and render it as an A2UI surface."""
+    raise RuntimeError("account service timed out")
+
+
+@wrap_tool_call
+def convert_tool_errors_to_messages(
+    request: ToolCallRequest,
+    handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+) -> ToolMessage | Command[Any]:
+    """Turn a tool exception into an error ToolMessage, named as ToolNode's own handler names it."""
+    try:
+        return handler(request)
+    except Exception as exc:  # noqa: BLE001
+        return ToolMessage(
+            content=f"The account service is unavailable ({exc}).",
+            tool_call_id=request.tool_call["id"],
+            name=request.tool_call["name"],
+            status="error",
+        )
 
 
 class ModelCallCounter(BaseCallbackHandler):
@@ -128,7 +179,10 @@ def check_working_route() -> None:
     )
 
     counter = ModelCallCounter()
-    config = {"configurable": {"thread_id": "working"}, "callbacks": [counter]}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": "working"},
+        "callbacks": [counter],
+    }
 
     surfaces = list(
         agent.stream(
@@ -185,9 +239,60 @@ def check_broken_route() -> None:
     assert counter.count == 2, f"expected the model to be re-entered, got {counter.count} call(s)"
 
 
+def check_failure_route() -> None:
+    print("\nFAILURE ROUTE — A2UI tool errors on a thread that already rendered a surface")
+
+    checkpointer = InMemorySaver()
+    config: RunnableConfig = {"configurable": {"thread_id": "failure"}}
+
+    healthy = create_agent(
+        model=MODEL,
+        tools=[fetch_account_summary],
+        middleware=[append_a2ui_summary],
+        state_schema=A2UIState,
+        checkpointer=checkpointer,
+    )
+    turn_one = healthy.invoke({"messages": [{"role": "user", "content": QUESTION}]}, config=config)
+    stale_surface = turn_one["a2ui_surfaces"][-1]
+    stale_balance = f"{stale_surface['props']['available_balance']:,.2f}"
+    assert isinstance(turn_one["messages"][-1], AIMessage), "turn 1 did not render a surface"
+
+    # `wrap_tool_call` takes no state_schema, so its middleware is typed against the
+    # base AgentState. AgentMiddleware's StateT is invariant — annotate to mix the two.
+    degraded_middleware: list[AgentMiddleware[Any, Any, Any]] = [
+        convert_tool_errors_to_messages,
+        append_a2ui_summary,
+    ]
+
+    # Same thread, same tool name — the account service is now down.
+    degraded = create_agent(
+        model=MODEL,
+        tools=[fetch_account_summary_unavailable],
+        middleware=degraded_middleware,
+        state_schema=A2UIState,
+        checkpointer=checkpointer,
+    )
+    result = degraded.invoke(
+        {"messages": [{"role": "user", "content": "Now show me account 112233."}]},
+        config=config,
+    )
+
+    last = result["messages"][-1]
+    account = stale_surface["props"]["account_id"]
+    print(f"  turn 1 surface:           {account}, available balance ${stale_balance}")
+    print(f"  turn 2 last message:      {type(last).__name__}")
+    print(f"  final message:            {str(last.content)!r}")
+
+    assert isinstance(last, ToolMessage) and last.status == "error"
+    assert stale_balance not in str(last.content), (
+        f"the stale {account} surface leaked into a failed turn"
+    )
+
+
 def main() -> None:
     check_working_route()
     check_broken_route()
+    check_failure_route()
     print("\nAll assertions passed.")
 
 
